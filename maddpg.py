@@ -1,4 +1,8 @@
-from config import BATCH_SIZE, BUFFER_SIZE, NUM_AGENTS, UPDATE_EVERY
+from config import (
+    BATCH_SIZE, 
+    BUFFER_SIZE, 
+    NUM_AGENTS, 
+)
 from ddpg import DDPG
 from memory import ReplayBuffer
 import numpy as np
@@ -14,18 +18,10 @@ class MADDPG:
         """
         self.state_size = state_size
         self.action_size = action_size 
-        self.agents = [DDPG(state_size, action_size, i) for i in range(NUM_AGENTS)]
+        self.agents = [DDPG(state_size, action_size) for _ in range(NUM_AGENTS)]
         self.memory = ReplayBuffer(BUFFER_SIZE, BATCH_SIZE)
         self.num_agents = NUM_AGENTS
         self.t_step = 0
-
-    def reset(self):
-        """
-        Reset MADDPG.
-        """
-        self.t_step = 0
-        for agent in self.agents:
-            agent.noise.reset()
 
     def act(self, states, add_noise=True):
         """
@@ -40,8 +36,9 @@ class MADDPG:
         =======
         actions
         """
-        return np.array([
-            agent.act(state, add_noise) for agent, state in zip(self.agents, states)
+        return np.concatenate([
+            agent.act(state, add_noise).reshape(1, 2) 
+            for agent, state in zip(self.agents, states)
         ])
 
     def step(self, states, actions, rewards, next_states, dones):
@@ -56,14 +53,10 @@ class MADDPG:
         next_states
         dones
         """
-        self.memory.add(states,actions,rewards,next_states,dones)
-
-        if self.t_step % UPDATE_EVERY == 0 and len(self.memory) > BATCH_SIZE:
-            experiences = self.memory.sample()
-            for agent in self.agents:
-                agent.learn(experiences)
-
-        self.t_step += 1
+        for i in range(NUM_AGENTS):
+            self.agents[i].step(states[i], actions[i], rewards[i], next_states[i], dones[i])
+            # Save experience for the other agents.
+            self.agents[1 - i].memory.add(states[i], actions[i], rewards[i], next_states[i], dones[i])
 
     def save(self):
         """

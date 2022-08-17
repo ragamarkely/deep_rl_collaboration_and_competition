@@ -2,7 +2,7 @@ from collections import deque
 import random
 from typing import NamedTuple
 
-from config import DEVICE, NUM_AGENTS
+from config import DEVICE
 import numpy as np 
 import torch
 
@@ -53,36 +53,12 @@ class ReplayBuffer:
         tuple of (states, actions, rewards, next_states, dones)
         """
         experiences = random.sample(self.memory, k=self.batch_size)
-        states = [
-            torch.from_numpy(
-                np.vstack([e.states[i] for e in experiences if e is not None])
-            ).float().to(DEVICE) 
-            for i in range(NUM_AGENTS)
-        ]
-        actions = [
-            torch.from_numpy(
-                np.vstack([e.actions[i] for e in experiences if e is not None])
-            ).float().to(DEVICE) 
-            for i in range(NUM_AGENTS)
-        ]
-        rewards = [
-            torch.from_numpy(
-                np.vstack([e.rewards[i] for e in experiences if e is not None])
-            ).float().to(DEVICE) 
-            for i in range(NUM_AGENTS)
-        ]
-        next_states = [
-            torch.from_numpy(
-                np.vstack([e.next_states[i] for e in experiences if e is not None])
-            ).float().to(DEVICE) 
-            for i in range(NUM_AGENTS)
-        ]
-        dones = [
-            torch.from_numpy(
-                np.vstack([e.dones[i] for e in experiences if e is not None]).astype(np.uint8)
-            ).float().to(DEVICE) 
-            for i in range(NUM_AGENTS)
-        ]
+
+        states = torch.from_numpy(np.vstack([e.states for e in experiences if e is not None])).float().to(DEVICE)
+        actions = torch.from_numpy(np.vstack([e.actions for e in experiences if e is not None])).float().to(DEVICE)
+        rewards = torch.from_numpy(np.vstack([e.rewards for e in experiences if e is not None])).float().to(DEVICE)
+        next_states = torch.from_numpy(np.vstack([e.next_states for e in experiences if e is not None])).float().to(DEVICE)
+        dones = torch.from_numpy(np.vstack([e.dones for e in experiences if e is not None]).astype(np.uint8)).float().to(DEVICE)
         return (states, actions, rewards, next_states, dones)
 
     def __len__(self):

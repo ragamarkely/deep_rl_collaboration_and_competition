@@ -1,4 +1,16 @@
-from config import DEVICE, GAMMA, LR_ACTOR, LR_CRITIC, NUM_AGENTS, TAU, WEIGHT_DECAY
+from config import (
+    DEVICE, 
+    GAMMA, 
+    LR_ACTOR, 
+    LR_CRITIC, 
+    TAU,
+    UPDATE_COUNT,
+    UPDATE_EVERY, 
+    WEIGHT_DECAY,
+    BATCH_SIZE, 
+    BUFFER_SIZE, 
+)
+from memory import ReplayBuffer
 from model import Actor, Critic
 from noise import OUNoise
 import numpy as np
@@ -9,7 +21,7 @@ class DDPG:
     """
     DDPG agent.
     """
-    def __init__(self, state_size, action_size, agent_index):
+    def __init__(self, state_size, action_size):
         """
         Initialize DDPG agent object.
 
@@ -22,32 +34,49 @@ class DDPG:
         """
         self.action_size = action_size 
         self.state_size = state_size
-        self.agent_index = agent_index
 
+        # Actor Network & Optimizer
         self.actor_local = Actor(state_size, action_size).to(DEVICE)
         self.actor_target = Actor(state_size, action_size).to(DEVICE)
         self.actor_optimizer = torch.optim.Adam(self.actor_local.parameters(), lr=LR_ACTOR)
 
+        # Critic Network & Optimizer
         self.critic_local = Critic(state_size, action_size).to(DEVICE)
         self.critic_target = Critic(state_size, action_size).to(DEVICE)
         self.critic_optimizer = torch.optim.Adam(self.critic_local.parameters(), lr=LR_CRITIC, weight_decay=WEIGHT_DECAY)
 
+        # Use the same weight for target and local networks.
         self.hard_update(self.actor_target, self.actor_local)
         self.hard_update(self.critic_target, self.critic_local)
 
+        # Noise 
         self.noise = OUNoise(action_size)
 
-    def hard_update(self, target_model, local_model):
+        # Replay memory buffer
+        self.memory = ReplayBuffer(BUFFER_SIZE, BATCH_SIZE)
+
+        # Time step tracker
+        self.t_step = 0
+
+    def step(self, state, action, reward, next_state, done):
         """
-        Copy parameters from local model to target model.
+        Save experience in memory and learn.
 
         Params
         ======
-        target_model
-        local_model
+        state
+        action
+        reward
+        next_state
+        done
         """
-        for target_params, local_params in zip(target_model.parameters(), local_model.parameters()):
-            target_params.data.copy_(local_params.data)
+        self.memory.add(state, action, reward, next_state, done)
+        self.t_step += 1
+
+        if self.t_step % UPDATE_EVERY == 0 and len(self.memory) > BATCH_SIZE:
+            for _ in range(UPDATE_COUNT):
+                experiences = self.memory.sample()
+                self.learn(experiences, GAMMA)
 
     def act(self, state, add_noise=True):
         """
@@ -71,41 +100,41 @@ class DDPG:
             action += self.noise.sample()
         return np.clip(action, -1, 1)
 
-    def learn(self, experiences):
+    def learn(self, experiences, gamma):
         """
         Update network parameters from a batch of experience tuples.
 
         Params
         ======
         experiences: experience tuple
+        gamma: discount factor
         """
         states, actions, rewards, next_states, dones = experiences
-        all_states = torch.cat(states, dim=1).to(DEVICE)
-        all_next_states = torch.cat(next_states, dim=1).to(DEVICE)
-        all_actions = torch.cat(actions, dim=1).to(DEVICE)
 
-        next_actions = [actions[i].clone() for i in range(NUM_AGENTS)]
-        next_actions[self.agent_index] = self.actor_target(next_states[self.agent_index])
-        all_next_actions = torch.cat(next_actions, dim=1).to(DEVICE)
-
-        Q_targets_next = self.critic_target(all_next_states, all_next_actions)
-        Q_target = rewards[self.agent_index] + GAMMA * Q_targets_next * (1 - dones[self.agent_index])
-        Q_expected = self.critic_local(all_states, all_actions)
-        critic_loss = F.mse_loss(Q_expected, Q_target)
+        # ----------------------- Update critic -------------------------------#
+        # Get predicted next state actions and Q values from target models.
+        actions_next = self.actor_target(next_states)
+        Q_targets_next = self.critic_target(next_states, actions_next)
+        # Compute Q targets for current states.
+        Q_targets = rewards + (gamma * Q_targets_next * (1 - dones))
+        # Compute critic loss.
+        Q_expected = self.critic_local(states, actions)
+        critic_loss = F.mse_loss(Q_expected, Q_targets)
+        # Minimize loss.
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.critic_local.parameters(), 1)
         self.critic_optimizer.step()
 
-        actions_pred = [actions[i].clone() for i in range(NUM_AGENTS)]
-        actions_pred[self.agent_index] = self.actor_local(states[self.agent_index])
-        all_actions_pred = torch.cat(actions_pred, dim=1).to(DEVICE)
-
+        # ----------------------- Update actor --------------------------------#       
+        # Compute actor loss.
+        actions_pred = self.actor_local(states)
+        actor_loss = - self.critic_local(states, actions_pred).mean()
+        # Minimize loss.
         self.actor_optimizer.zero_grad()
-        actor_loss = - self.critic_local(all_states, all_actions_pred).mean()
         actor_loss.backward()
         self.actor_optimizer.step()
 
+        # ------------------- Update target networks --------------------------#
         self.soft_update(self.critic_local, self.critic_target, TAU)
         self.soft_update(self.actor_local, self.actor_target, TAU)
 
@@ -121,3 +150,15 @@ class DDPG:
         """
         for target_params, local_params in zip(target_model.parameters(), local_model.parameters()):
             target_params.data.copy_(tau * local_params.data + (1.0 - tau) * target_params.data)
+
+    def hard_update(self, target_model, local_model):
+        """
+        Copy parameters from local model to target model.
+
+        Params
+        ======
+        target_model
+        local_model
+        """
+        for target_params, local_params in zip(target_model.parameters(), local_model.parameters()):
+            target_params.data.copy_(local_params.data)
